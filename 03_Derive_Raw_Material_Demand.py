@@ -16,11 +16,11 @@
 # MAGIC
 # MAGIC For each (raw, product) pair we sum the qty along every simple path — that handles "diamond" BOMs where one raw feeds the same product via multiple intermediates.
 # MAGIC
-# MAGIC ## Why networkx (not graphframes)
+# MAGIC ## Why networkx
 # MAGIC
-# MAGIC The upstream accelerator uses `graphframes.GraphFrame(...)` with `aggregateMessages`. That library calls `DataFrame.sql_ctx`, which **Spark Connect (the engine behind serverless Spark) has removed** — so the original code can't run on serverless without modification.
+# MAGIC The right tool for a graph depends on its size. The upstream accelerator uses `graphframes` — a distributed graph engine built for billion-edge graphs (think: PageRank on the web crawl). Powerful, but the Spark coordination overhead dominates wall-time on small graphs.
 # MAGIC
-# MAGIC This BOM has <100 nodes total, so we pull it onto the driver as a pandas frame, build a `networkx.DiGraph`, and traverse it locally. The result is the same (`RAW`, `product`, `QTY_RAW`) — just faster and serverless-compatible.
+# MAGIC This BOM has fewer than 100 nodes. At that scale, `networkx` — the canonical single-node Python graph library — is genuinely the better fit: well-tested implementations of every standard algorithm, no distributed-execution overhead, and the traversal completes in milliseconds on the driver. As a bonus, `graphframes` calls `DataFrame.sql_ctx` (removed in Spark Connect), so it wouldn't run on serverless Spark anyway — but the primary reason for `networkx` here is simply that it's the right size of tool for the problem.
 
 # COMMAND ----------
 
