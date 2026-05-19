@@ -1,34 +1,34 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 01 — Introduction & Data Setup
+# MAGIC # 01 — Introduction and Data Setup
 # MAGIC
-# MAGIC Welcome! This notebook seeds the synthetic pharmaceutical supply-chain dataset that the rest of the pipeline (notebooks 02 → 05) operates on. **Run this first.**
+# MAGIC Run this notebook first. It seeds the synthetic pharmaceutical supply-chain dataset that the rest of the pipeline (notebooks 02 through 05) operates on.
 # MAGIC
-# MAGIC ## The scenario
+# MAGIC ### Scenario
 # MAGIC
-# MAGIC A pharma manufacturer operates:
+# MAGIC A pharmaceutical manufacturer operates:
 # MAGIC
-# MAGIC - **3 plants** that produce **30 product SKUs**
-# MAGIC - **5 distribution centers** that warehouse those SKUs
-# MAGIC - **30–60 wholesalers per DC** who order from them weekly
+# MAGIC - 3 plants producing 30 product SKUs
+# MAGIC - 5 distribution centers warehousing those SKUs
+# MAGIC - 30 to 60 wholesalers per distribution center ordering weekly
 # MAGIC
-# MAGIC The downstream notebooks answer the questions a planner cares about: *next week's demand per SKU per wholesaler, how much raw material we need to make that, and how to ship it for the lowest cost*. Notebook 05 adds three SQL functions so the whole pipeline becomes queryable from an AI agent.
+# MAGIC The downstream notebooks forecast next week's demand per SKU per wholesaler, derive the raw-material requirements to meet that demand, solve a least-cost transportation plan, and expose three Unity Catalog SQL functions for AI-agent integration.
 # MAGIC
-# MAGIC ## What this notebook does
+# MAGIC ### What this notebook does
 # MAGIC
-# MAGIC 1. Reads two widgets (`catalog_name`, `db_name`)
-# MAGIC 2. Uses the chosen catalog and creates the schema if it doesn't exist
-# MAGIC 3. Calls `_resources/00-setup` with `reset_all_data=true`, which in turn triggers `_resources/01-data-generator` to write the six source tables:
+# MAGIC 1. Reads two widgets (`catalog_name`, `db_name`).
+# MAGIC 2. Uses the chosen catalog and creates the schema if it does not exist.
+# MAGIC 3. Calls `_resources/00-setup` with `reset_all_data=true`, which triggers `_resources/01-data-generator` to write six source tables:
 # MAGIC    - `product_demand_historical` — 104 weeks of demand per (product, wholesaler)
 # MAGIC    - `distribution_center_to_wholesaler_mapping`
 # MAGIC    - `bom` — bill of materials (raw → intermediate → product)
-# MAGIC    - `plant_supply` — max units each plant can produce per product
-# MAGIC    - `transport_cost` — shipping cost from each plant to each DC
-# MAGIC    - `list_prices` — unit price per SKU (used by notebook 05's revenue_at_risk function)
+# MAGIC    - `plant_supply` — maximum units each plant can produce per product
+# MAGIC    - `transport_cost` — shipping cost from each plant to each distribution center
+# MAGIC    - `list_prices` — unit price per SKU (used by notebook 05's `revenue_risk` function)
 # MAGIC
-# MAGIC ## Compute
+# MAGIC ### Compute
 # MAGIC
-# MAGIC Standard **serverless** compute is fine. Data generation takes ~3–5 minutes (104 weeks × 900 series of synthetic ARMA demand, plus BOM + transport tables).
+# MAGIC Standard serverless compute is sufficient. Data generation takes approximately 3 to 5 minutes (104 weeks across 900 synthetic ARMA series, plus BOM and transport tables).
 
 # COMMAND ----------
 
@@ -72,9 +72,9 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_name}.{db_name}")
 # MAGIC
 # MAGIC | # | Notebook | Compute |
 # MAGIC |---|---|---|
-# MAGIC | 2 | `02_Fine_Grained_Demand_Forecasting` | **Serverless GPU** — Accelerator: A10, Environment version: 5 (set via *Configuration* tab) |
+# MAGIC | 2 | `02_Fine_Grained_Demand_Forecasting` | Serverless GPU — Accelerator A10, Environment version 5 (set in the Configuration tab) |
 # MAGIC | 3 | `03_Derive_Raw_Material_Demand` | Standard serverless |
 # MAGIC | 4 | `04_Optimize_Transportation` | Standard serverless |
 # MAGIC | 5 | `05_Data_Analysis_&_Functions` | Standard serverless |
 # MAGIC
-# MAGIC > **Why no `%run` cascade?** Notebook 02 needs a GPU; 03/04/05 don't. Chaining everything via `%run` from this notebook would force GPU compute on the cheap steps. Running each notebook on its own lets you pick the right compute per step.
+# MAGIC Notebook 02 requires GPU compute while 03 through 05 do not. Running each notebook independently lets you select appropriate compute per step rather than forcing GPU compute on the entire pipeline.

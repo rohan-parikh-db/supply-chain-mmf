@@ -2,11 +2,11 @@
 # MAGIC %md
 # MAGIC # 04 — Transport Optimization
 # MAGIC
-# MAGIC > **Prerequisite:** notebook 02 has populated `product_demand_forecasted`.
+# MAGIC Prerequisite: notebook 02 has populated `product_demand_forecasted`.
 # MAGIC
-# MAGIC Given the forecasted demand per (DC, product), the per-plant supply caps, and the per-(plant, DC) shipping costs, this notebook solves one **integer linear program (ILP) per product** to find the cheapest shipment plan. The result is written to `shipment_recommendations` — one row per (product, plant, DC) telling the planner how many units to ship.
+# MAGIC Given the forecasted demand per (DC, product), the per-plant supply caps, and the per-(plant, DC) shipping costs, this notebook solves one integer linear program (ILP) per product to find the cheapest shipment plan. The result is written to `shipment_recommendations`, one row per (product, plant, DC) with the recommended `qty_shipped`.
 # MAGIC
-# MAGIC ## The LP, plainly stated
+# MAGIC ### The optimization problem
 # MAGIC
 # MAGIC For each product, minimize:
 # MAGIC
@@ -14,15 +14,15 @@
 # MAGIC Σ over (plant, dc):  cost[plant→dc] * qty_shipped[plant→dc]
 # MAGIC ```
 # MAGIC
-# MAGIC subject to:
+# MAGIC Subject to:
 # MAGIC
 # MAGIC - `qty_shipped` is a non-negative integer
-# MAGIC - sum of units leaving each plant ≤ that plant's supply for this product
-# MAGIC - sum of units arriving at each DC ≥ that DC's forecasted demand for this product
+# MAGIC - Sum of units leaving each plant ≤ that plant's supply for this product
+# MAGIC - Sum of units arriving at each DC ≥ that DC's forecasted demand for this product
 # MAGIC
-# MAGIC ## Scaling
+# MAGIC ### Scaling
 # MAGIC
-# MAGIC One ILP per product is embarrassingly parallel — we solve all 30 in parallel via Spark's `groupBy(...).applyInPandas(...)`. Replace 30 with 300,000 and the same code still runs; only the executor count needs to grow.
+# MAGIC One ILP per product is independent of the others, so all 30 are solved in parallel via Spark's `groupBy(...).applyInPandas(...)`. The same code scales to hundreds of thousands of products by adding executors.
 
 # COMMAND ----------
 

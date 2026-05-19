@@ -2,25 +2,25 @@
 # MAGIC %md
 # MAGIC # 03 — Derive Raw Material Demand from BOM
 # MAGIC
-# MAGIC > **Prerequisite:** notebook 02 has populated `product_demand_forecasted`.
+# MAGIC Prerequisite: notebook 02 has populated `product_demand_forecasted`.
 # MAGIC
-# MAGIC Given the forecasted demand per finished SKU (from notebook 02) and the **Bill of Materials (BOM)** (from notebook 01), this notebook computes how much of each **raw material** the supply chain needs to fulfill that demand.
+# MAGIC Given the forecasted demand per finished SKU (from notebook 02) and the Bill of Materials (BOM, from notebook 01), this notebook computes how much of each raw material the supply chain requires to meet that demand.
 # MAGIC
-# MAGIC ## The graph
+# MAGIC ### The graph
 # MAGIC
-# MAGIC The BOM describes a directed graph: raw materials feed primary materials, which feed intermediate materials, which feed finished products. Each edge carries a `qty` — how many units of the source are needed per unit of the destination.
+# MAGIC The BOM is a directed graph: raw materials feed primary materials, which feed intermediate materials, which feed finished products. Each edge carries a `qty` — the number of units of the source needed per unit of the destination.
 # MAGIC
 # MAGIC ```
 # MAGIC raw_material  --qty-->  primary  --qty-->  intermediate  --qty-->  product
 # MAGIC ```
 # MAGIC
-# MAGIC For each (raw, product) pair we sum the qty along every simple path — that handles "diamond" BOMs where one raw feeds the same product via multiple intermediates.
+# MAGIC For each (raw, product) pair the notebook sums `qty` along every simple path, which handles diamond-shaped BOMs where one raw material feeds the same product via multiple intermediates.
 # MAGIC
-# MAGIC ## Why networkx
+# MAGIC ### Choice of graph library
 # MAGIC
-# MAGIC The right tool for a graph depends on its size. The upstream accelerator uses `graphframes` — a distributed graph engine built for billion-edge graphs (think: PageRank on the web crawl). Powerful, but the Spark coordination overhead dominates wall-time on small graphs.
+# MAGIC The upstream accelerator uses `graphframes`, a distributed graph engine designed for billion-edge graphs. On small graphs, the Spark coordination overhead dominates wall time.
 # MAGIC
-# MAGIC This BOM has fewer than 100 nodes. At that scale, `networkx` — the canonical single-node Python graph library — is genuinely the better fit: well-tested implementations of every standard algorithm, no distributed-execution overhead, and the traversal completes in milliseconds on the driver. As a bonus, `graphframes` calls `DataFrame.sql_ctx` (removed in Spark Connect), so it wouldn't run on serverless Spark anyway — but the primary reason for `networkx` here is simply that it's the right size of tool for the problem.
+# MAGIC This BOM has fewer than 100 nodes. At that scale, single-node `networkx` is the appropriate tool: standard algorithm implementations, no distributed-execution overhead, traversals complete in milliseconds on the driver. `graphframes` also accesses `DataFrame.sql_ctx` (removed in Spark Connect), so it would not run on serverless Spark, but the primary motivation here is graph size, not compatibility.
 
 # COMMAND ----------
 

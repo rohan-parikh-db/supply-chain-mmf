@@ -1,21 +1,21 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 05 — Data Analysis & UC SQL Functions
+# MAGIC # 05 — Data Analysis and UC SQL Functions
 # MAGIC
-# MAGIC > **Prerequisite:** notebooks 02–04 have populated `product_demand_forecasted`, `raw_material_demand`, `raw_material_supply`, and `shipment_recommendations`.
+# MAGIC Prerequisite: notebooks 02 through 04 have populated `product_demand_forecasted`, `raw_material_demand`, `raw_material_supply`, and `shipment_recommendations`.
 # MAGIC
 # MAGIC This notebook does two things:
 # MAGIC
-# MAGIC 1. **Surfaces the most critical raw material** — the one whose total supply most undershoots total demand. This SKU is the natural anchor for the rest of the analysis.
-# MAGIC 2. **Creates three reusable Unity Catalog SQL functions** so the pipeline becomes queryable by any SQL client *and* directly callable as tools from a Genie/Agent integration:
+# MAGIC 1. Identifies the most critical raw material — the one whose total supply most undershoots total demand. This SKU anchors the rest of the analysis.
+# MAGIC 2. Creates three Unity Catalog SQL functions so the pipeline becomes queryable from any SQL client and callable as tools from a Genie or agent integration:
 # MAGIC
-# MAGIC | Function | What it returns |
+# MAGIC | Function | Returns |
 # MAGIC |---|---|
-# MAGIC | `product_from_raw(raw_material)` | All downstream products that depend on a given raw material, with per-step quantities. |
-# MAGIC | `raw_from_product(product)` | All upstream raw materials needed to make a given product. |
-# MAGIC | `revenue_risk(raw_material)` | For a given raw material, the dollar revenue at risk if the current shortage propagates to finished-product output. |
+# MAGIC | `product_from_raw(raw_material)` | All downstream products that depend on a given raw material, with per-step quantities |
+# MAGIC | `raw_from_product(product)` | All upstream raw materials needed to make a given product |
+# MAGIC | `revenue_risk(raw_material)` | For a given raw material, the dollar revenue at risk if the current shortage propagates to finished-product output |
 # MAGIC
-# MAGIC Once these exist, an AI agent can answer questions like *"How much revenue is at risk if we can't get enough material H7AZR?"* with a single SQL call.
+# MAGIC Once registered, an AI agent can answer questions such as "How much revenue is at risk if we cannot source enough material H7AZR?" with a single SQL call.
 
 # COMMAND ----------
 
@@ -224,14 +224,14 @@ FROM {catalogName}.{dbName}.revenue_risk('{mat_number}')
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## You're done!
+# MAGIC ### Pipeline complete
 # MAGIC
-# MAGIC The full pipeline (notebooks 01 → 05) has produced:
+# MAGIC Notebooks 01 through 05 have produced:
 # MAGIC
-# MAGIC - **13 Delta tables** in `{catalog}.{db}` (source data + MMF intermediates + forecasted/derived/optimized outputs).
-# MAGIC - **3 UC SQL functions** (`product_from_raw`, `raw_from_product`, `revenue_risk`) that any downstream tool can call.
+# MAGIC - 13 Delta tables in `{catalog}.{db}` (source data, MMF intermediates, forecasted, derived, and optimized outputs)
+# MAGIC - 3 UC SQL functions (`product_from_raw`, `raw_from_product`, `revenue_risk`) callable from any downstream tool
 # MAGIC
-# MAGIC Try these against the schema:
+# MAGIC Example queries against the schema:
 # MAGIC
 # MAGIC ```sql
 # MAGIC -- Which products will be hit by a shortage of the most-stressed raw material?
@@ -246,4 +246,4 @@ FROM {catalogName}.{dbName}.revenue_risk('{mat_number}')
 # MAGIC GROUP BY product;
 # MAGIC ```
 # MAGIC
-# MAGIC Connect this schema to a Databricks Genie space (or a custom agent) and the same questions become natural-language tools.
+# MAGIC Connecting this schema to a Databricks Genie space or a custom agent exposes the same questions as natural-language tools.
