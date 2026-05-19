@@ -1,25 +1,63 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 02 — Fine-Grained Demand Forecasting with Chronos-2
+# MAGIC # 02 — Fine-Grained Demand Forecasting with Chronos-2 + MMF
 # MAGIC
 # MAGIC > **Prerequisite:** run `01_Introduction_And_Setup` first to seed the source tables.
 # MAGIC
-# MAGIC This notebook produces a one-week-ahead demand forecast for **every (product, wholesaler) pair** — 900 time series in our synthetic dataset — and then aggregates the results back to the **distribution-center level** that downstream notebooks consume.
+# MAGIC This notebook produces a one-week-ahead demand forecast for **every (product, wholesaler) pair** — 900 time series in our synthetic dataset — and aggregates the result back to the **distribution-center level** that the rest of the pipeline consumes.
 # MAGIC
-# MAGIC The work is delegated to two open-source pieces:
+# MAGIC It's a showcase of two technologies working together. Neither is a "convenience swap" for the other:
 # MAGIC
-# MAGIC 1. **[Many Model Forecasting (MMF)](https://github.com/databricks-industry-solutions/many-model-forecasting)** — a Databricks solution accelerator that wraps per-series scoring, rolling backtests, MLflow logging, and UC model registration into a single `run_forecast(...)` call.
-# MAGIC 2. **[Chronos-2 foundation models](https://huggingface.co/autogluon)** from AWS AutoGluon — pretrained time-series transformers that produce probabilistic forecasts **zero-shot** (no per-series training). We fit two variants side-by-side and pick the winner by mean SMAPE.
+# MAGIC ---
 # MAGIC
-# MAGIC ### Why foundation models for demand forecasting?
+# MAGIC ### 🧠 [Chronos-2](https://huggingface.co/autogluon/chronos-2) — pretrained time-series foundation model from AWS AutoGluon
 # MAGIC
-# MAGIC The legacy pattern in this dataset would fit 900 separate AutoARIMA / Holt-Winters / ExponentialSmoothing models — one per series — typically distributed via a `pandas_udf`. That works, but on serverless it has two friction points: Spark Connect's Python workers are CPU-only (so you don't benefit from the GPUs that *do* exist on serverless GPU compute), and per-series fitting time scales linearly with series count.
+# MAGIC Chronos-2 is an encoder-only transformer trained by AWS on a massive, diverse corpus of real and synthetic time series. Think of it as an LLM for sequences of numbers. What that buys you, on the *forecasting capability* axis:
 # MAGIC
-# MAGIC A zero-shot foundation model flips that: **one model, batched inference, one GPU**. On 900 weekly series, this notebook runs end-to-end in ~30 seconds and hits ~10–11% mean SMAPE — competitive with tuned per-series classical models that take 30–60× more compute.
+# MAGIC - **Zero-shot.** No per-series fitting. The model has already seen what trend, seasonality, level shifts, intermittent demand, and bursty spikes look like — at inference time, it just *applies* that knowledge to your series. AutoARIMA has to relearn each series from scratch.
+# MAGIC - **Probabilistic by default.** Each forecast is a full quantile distribution, not just a point estimate. Uncertainty bands come from the model's learned distribution over outcomes, not Gaussian assumptions on residuals — typically better calibrated, especially for skewed or count-style demand.
+# MAGIC - **Cross-series transfer.** Patterns the model learned from millions of other series (retail, finance, energy, healthcare, IoT) carry over to yours. Per-series AutoARIMA literally cannot do this — each fit is independent.
+# MAGIC - **Robust to short / noisy / non-stationary series.** Classical methods need enough history and a relatively stable distribution to fit well. Chronos-2 stays usable on series with <50 points, gaps, regime shifts, or sudden volume changes.
+# MAGIC - **GPU-batched.** All 900 series go through the model in one batched inference pass on a single A10 GPU. ~30 seconds end-to-end.
+# MAGIC
+# MAGIC We fit two Chronos-2 variants side-by-side (28M-param Small and 120M-param Base) and pick the one with the better backtest SMAPE.
+# MAGIC
+# MAGIC ---
+# MAGIC
+# MAGIC ### 🛠️ [Many Model Forecasting (MMF)](https://github.com/databricks-industry-solutions/many-model-forecasting) — Databricks' multi-model forecasting accelerator
+# MAGIC
+# MAGIC MMF wraps the forecasting workflow — for *any* model family, foundation or classical — into one declarative `run_forecast(...)` call. It's not a thin convenience; it's doing real work on your behalf:
+# MAGIC
+# MAGIC - **Model registry.** Pass `active_models=["Chronos2Small", "Chronos2"]` and MMF resolves each name through a YAML config to the right Python class and HuggingFace repo (`autogluon/chronos-2-small`, `autogluon/chronos-2`). Swapping in `TimesFM` or `ChronosBolt` is a one-string change.
+# MAGIC - **Rolling-window backtesting.** Configurable `backtest_length` + `stride` produce per-series cross-validation metrics so you can defend the forecast quality with numbers, not vibes.
+# MAGIC - **Multi-model comparison out of the box.** One call fits and evaluates every model in `active_models` against the same series. Both end up in `mmf_evaluation` with model-tagged rows, ready for the winner-selection logic in the next cell.
+# MAGIC - **MLflow tracking.** Every run logs to a single MLflow experiment with parameters, metrics, and model artifacts.
+# MAGIC - **Unity Catalog registration.** Trained foundation models land in UC as `{catalog}.{db}.<model>_<use_case>` — ready for Model Serving, governance, lineage.
+# MAGIC - **Serverless GPU integration.** `accelerator="gpu", serverless=True` tells MMF to use Chronos's driver-only predict path (Spark Connect Python workers on serverless are CPU-only, so distributed pandas-UDF inference wouldn't help anyway).
+# MAGIC
+# MAGIC Without MMF, the rest of this notebook would be ~200 lines of orchestration boilerplate — backtest loops, MLflow logging, UC registration, multi-model comparison framework.
+# MAGIC
+# MAGIC ---
+# MAGIC
+# MAGIC ### How this compares to the per-series classical baseline
+# MAGIC
+# MAGIC The upstream supply-chain accelerator fits one ExponentialSmoothing model per (product, wholesaler) pair via a `pandas_udf` — 900 separate models, fit from scratch. Chronos-2 + MMF replaces that:
+# MAGIC
+# MAGIC | | Per-series classical (upstream) | **Chronos-2 + MMF (this notebook)** |
+# MAGIC |---|---|---|
+# MAGIC | Model count | 900 separate AutoARIMA / ETS / Holt-Winters fits | One foundation model, batched across all 900 series |
+# MAGIC | Per-series tuning | (p,d,q) search, seasonality detection, manual diagnostics | None — zero-shot |
+# MAGIC | Cross-series learning | No | Yes (via pretrained corpus) |
+# MAGIC | Probabilistic intervals | Gaussian-on-residuals (parametric) | Learned quantile distributions (non-parametric) |
+# MAGIC | Handles short / noisy series | Often poorly | Robustly |
+# MAGIC | Wall time on 900 weekly series | Minutes-to-hours, depending on history and tuning | **~30s on a single A10** |
+# MAGIC | Backtest framework | DIY | Provided by MMF |
+# MAGIC | MLflow + UC registration | DIY | Provided by MMF |
+# MAGIC | Mean SMAPE on this dataset | varies with tuning | **10.82%** (verified run, see results below) |
 # MAGIC
 # MAGIC ### Compute requirement
 # MAGIC
-# MAGIC Attach this notebook to **serverless compute** with **`Accelerator = A10`** and **`Environment version = 5`** via the notebook's *Configuration* tab. CPU-only serverless will not work — Chronos needs a GPU.
+# MAGIC Attach this notebook to **serverless compute** with **`Accelerator = A10`** and **`Environment version = 5`** via the notebook's *Configuration* tab. CPU-only serverless won't work — Chronos-2 needs a GPU.
 
 # COMMAND ----------
 
