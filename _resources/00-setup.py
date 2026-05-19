@@ -1,7 +1,7 @@
 # Databricks notebook source
 dbutils.widgets.dropdown("reset_all_data", "false", ["true", "false"], "Reset all data")
 dbutils.widgets.text("catalog_name", "main",            "Catalog Name")   # we already set this to main
-dbutils.widgets.text("db_name",      "supply_chain_db", "Database Name")  # ← new default
+dbutils.widgets.text("db_name",      "supply_chain_mmf", "Database Name")  # ← new default
 
 # COMMAND ----------
 

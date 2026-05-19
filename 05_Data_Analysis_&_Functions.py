@@ -1,33 +1,34 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC This project is based on Databricks' supply chain optimization solution accelerator available at: https://github.com/databricks-industry-solutions/supply-chain-optimization. For more information about this solution accelerator, visit https://www.databricks.com/solutions/accelerators/supply-chain-distribution-optimization.
+# MAGIC # 05 — Data Analysis & UC SQL Functions
+# MAGIC
+# MAGIC > **Prerequisite:** notebooks 02–04 have populated `product_demand_forecasted`, `raw_material_demand`, `raw_material_supply`, and `shipment_recommendations`.
+# MAGIC
+# MAGIC This notebook does two things:
+# MAGIC
+# MAGIC 1. **Surfaces the most critical raw material** — the one whose total supply most undershoots total demand. This SKU is the natural anchor for the rest of the analysis.
+# MAGIC 2. **Creates three reusable Unity Catalog SQL functions** so the pipeline becomes queryable by any SQL client *and* directly callable as tools from a Genie/Agent integration:
+# MAGIC
+# MAGIC | Function | What it returns |
+# MAGIC |---|---|
+# MAGIC | `product_from_raw(raw_material)` | All downstream products that depend on a given raw material, with per-step quantities. |
+# MAGIC | `raw_from_product(product)` | All upstream raw materials needed to make a given product. |
+# MAGIC | `revenue_risk(raw_material)` | For a given raw material, the dollar revenue at risk if the current shortage propagates to finished-product output. |
+# MAGIC
+# MAGIC Once these exist, an AI agent can answer questions like *"How much revenue is at risk if we can't get enough material H7AZR?"* with a single SQL call.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Supply Chain Data Analysis
-# MAGIC
-# MAGIC This notebook performs:
-# MAGIC
-# MAGIC - Raw Material Analysis: Identifies critical materials with supply shortages by comparing demand vs supply data
-# MAGIC - BOM Relationship Mapping: Analyzes the hierarchical relationships between raw materials, intermediate materials and final products
-# MAGIC - Custom Functions:
-# MAGIC   - product_from_raw: Maps a raw material to all downstream products
-# MAGIC   - raw_from_product: Maps a product to all upstream raw materials
-# MAGIC   - revenue_risk: Calculates potential revenue impact from raw material shortages
+# MAGIC ## Configuration
 
 # COMMAND ----------
 
-# Create widgets for catalog and database names
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("db_name", "supply_chain_db", "Database Name")
+dbutils.widgets.text("db_name", "supply_chain_mmf", "Database Name")
 
-# COMMAND ----------
-
-# Get values from widgets
 catalog_name = dbutils.widgets.get("catalog_name")
 db_name = dbutils.widgets.get("db_name")
-
 
 # COMMAND ----------
 
@@ -35,12 +36,11 @@ db_name = dbutils.widgets.get("db_name")
 
 # COMMAND ----------
 
-# Use the variables from the setup script for consistency
 catalogName = catalog_name
 dbName = db_name
 
-print(f"Using catalogName: {catalogName}")
-print(f"Using dbName: {dbName}")
+print(f"Using catalog: {catalogName}")
+print(f"Using database: {dbName}")
 
 # COMMAND ----------
 
@@ -221,12 +221,29 @@ SELECT product, revenue_risk
 FROM {catalogName}.{dbName}.revenue_risk('{mat_number}')
 """).display()
 
-
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC &copy; 2023 Databricks, Inc. All rights reserved. The source in this notebook is provided subject to the Databricks License [https://databricks.com/db-license-source].  All included or referenced third party libraries are subject to the licenses set forth below.
+# MAGIC ## You're done!
 # MAGIC
-# MAGIC | library                                | description             | license    | source                                              |
-# MAGIC |----------------------------------------|-------------------------|------------|-----------------------------------------------------|
-# MAGIC | pulp                                 | A python Linear Programming API      | https://github.com/coin-or/pulp/blob/master/LICENSE        | https://github.com/coin-or/pulp                      |
+# MAGIC The full pipeline (notebooks 01 → 05) has produced:
+# MAGIC
+# MAGIC - **13 Delta tables** in `{catalog}.{db}` (source data + MMF intermediates + forecasted/derived/optimized outputs).
+# MAGIC - **3 UC SQL functions** (`product_from_raw`, `raw_from_product`, `revenue_risk`) that any downstream tool can call.
+# MAGIC
+# MAGIC Try these against the schema:
+# MAGIC
+# MAGIC ```sql
+# MAGIC -- Which products will be hit by a shortage of the most-stressed raw material?
+# MAGIC SELECT * FROM {catalogName}.{dbName}.product_from_raw('<some_raw_id>');
+# MAGIC
+# MAGIC -- Which raw materials go into a specific finished SKU?
+# MAGIC SELECT * FROM {catalogName}.{dbName}.raw_from_product('syringe_1');
+# MAGIC
+# MAGIC -- How much weekly revenue is at risk?
+# MAGIC SELECT product, SUM(revenue_risk) AS revenue_at_risk
+# MAGIC FROM {catalogName}.{dbName}.revenue_risk('<some_raw_id>')
+# MAGIC GROUP BY product;
+# MAGIC ```
+# MAGIC
+# MAGIC Connect this schema to a Databricks Genie space (or a custom agent) and the same questions become natural-language tools.

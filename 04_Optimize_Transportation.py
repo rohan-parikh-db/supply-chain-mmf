@@ -1,54 +1,46 @@
 # Databricks notebook source
-# MAGIC %md This project is based on Databricks' supply chain optimization solution accelerator available at: https://github.com/databricks-industry-solutions/supply-chain-optimization. For more information about this solution accelerator, visit https://www.databricks.com/solutions/accelerators/supply-chain-distribution-optimization.
+# MAGIC %md
+# MAGIC # 04 — Transport Optimization
+# MAGIC
+# MAGIC > **Prerequisite:** notebook 02 has populated `product_demand_forecasted`.
+# MAGIC
+# MAGIC Given the forecasted demand per (DC, product), the per-plant supply caps, and the per-(plant, DC) shipping costs, this notebook solves one **integer linear program (ILP) per product** to find the cheapest shipment plan. The result is written to `shipment_recommendations` — one row per (product, plant, DC) telling the planner how many units to ship.
+# MAGIC
+# MAGIC ## The LP, plainly stated
+# MAGIC
+# MAGIC For each product, minimize:
+# MAGIC
+# MAGIC ```
+# MAGIC Σ over (plant, dc):  cost[plant→dc] * qty_shipped[plant→dc]
+# MAGIC ```
+# MAGIC
+# MAGIC subject to:
+# MAGIC
+# MAGIC - `qty_shipped` is a non-negative integer
+# MAGIC - sum of units leaving each plant ≤ that plant's supply for this product
+# MAGIC - sum of units arriving at each DC ≥ that DC's forecasted demand for this product
+# MAGIC
+# MAGIC ## Scaling
+# MAGIC
+# MAGIC One ILP per product is embarrassingly parallel — we solve all 30 in parallel via Spark's `groupBy(...).applyInPandas(...)`. Replace 30 with 300,000 and the same code still runs; only the executor count needs to grow.
+
+# COMMAND ----------
+
+# MAGIC %pip install pulp --quiet
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Transport Optimization
+# MAGIC ## Configuration
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC *Prerequisite: Make sure to run 02_Fine_Grained_Demand_Forecasting before running this notebook.*
-# MAGIC
-# MAGIC In this notebook we solve the load planning (LP) to optimize transport costs when shipping products from the plants to the distribution centers. Furthermore, we show how to scale to hundreds of thousands of products.
-# MAGIC
-# MAGIC Key highlights for this notebook:
-# MAGIC - Use Databricks' collaborative and interactive notebook environment to find optimization procedure
-# MAGIC - Pandas UDFs (user-defined functions) can take your single-node data science code, and distribute it across multiple nodes 
-# MAGIC
-# MAGIC More precisely we solve the following optimzation problem for each product.
-# MAGIC
-# MAGIC *Mathematical goal:*
-# MAGIC We have a set of manufacturing plants that distribute products to a set of distribution centers. The goal is to minimize overall shipment costs, i.e. we minimize w.r.t. quantities: <br/>
-# MAGIC cost_of_plant_1_to_distribution_center_1 * quantity_shipped_of_plant_1_to_distribution_center_1 <br/> \+ … \+ <br/>
-# MAGIC cost_of_plant_1_to_distribution_center_n * quantity_shipped_of_plant_n_to_distribution_center_m 
-# MAGIC
-# MAGIC *Mathematical constraints:*
-# MAGIC - Quantities shipped must be zero or positive integers
-# MAGIC - The sum of products shipped from one manufacturing plant does not exceed its maximum supply 
-# MAGIC - The sum of products shipped to each distribution center meets at least the demand forecasted 
-
-# COMMAND ----------
-
-# The pulp library is used for solving the LP problem
-# We used this documentation for developemnt of this notebook
-# https://coin-or.github.io/pulp/CaseStudies/a_transportation_problem.html
-%pip install pulp
-
-# COMMAND ----------
-
-# Create widgets for catalog and database names
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("db_name", "supply_chain_db", "Database Name")
+dbutils.widgets.text("db_name", "supply_chain_mmf", "Database Name")
 
-# COMMAND ----------
-
-# Get values from widgets
 catalog_name = dbutils.widgets.get("catalog_name")
 db_name = dbutils.widgets.get("db_name")
 
-# Display the values being used
 print(f"Using catalog: {catalog_name}")
 print(f"Using database: {db_name}")
 
@@ -58,35 +50,22 @@ print(f"Using database: {db_name}")
 
 # COMMAND ----------
 
-print(catalogName)
-print(dbName)
-
-# COMMAND ----------
-
-import os
-import datetime as dt
 import re
-import numpy as np
 import pandas as pd
-
 import pulp
-
 import pyspark.sql.functions as f
-from pyspark.sql.types import *
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Defining and solving the Load Planning
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC Reaed forecasted product demand grouped by distribution center. 
+# MAGIC ## Read inputs and reshape for the LP
 # MAGIC
-# MAGIC Read max supply available for each product from plants.
+# MAGIC - **Demand** — pivot `product_demand_forecasted` so each row is one product and columns are `Demand_Distribution_Center_*`.
+# MAGIC - **Supply** — per-(product, plant) caps, renamed to `Supply_Plant_*`.
+# MAGIC - **Cost** — per-(product, plant) costs to each DC, renamed to `Cost_Distribution_Center_*`.
 # MAGIC
-# MAGIC Read shipping costs between plants and distribution centers. 
+# MAGIC Joining all three on `product` gives one row per (product, plant) carrying everything the LP solver needs.
 
 # COMMAND ----------
 
@@ -258,58 +237,53 @@ def transport_optimization(pdf: pd.DataFrame) -> pd.DataFrame:
 
 # COMMAND ----------
 
-# Test the function
-#product_selection = "nail_1"
-# pdf = lp_table_all_info.filter(f.col("product")==product_selection).toPandas()
-# transport_optimization(pdf)
-
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Distributed execution: 
-# MAGIC We partition the data by product for parallel processnig
+# MAGIC ## Solve all products in parallel via `applyInPandas`
 # MAGIC
-# MAGIC We use `applyInPandas` to apply the `transport_optimization` function to each product
-# MAGIC
-# MAGIC This means we can efficiently handle hundreds of thousands of products by distributing the optimization workload across Spark nodes.
+# MAGIC Each Spark partition runs `transport_optimization` for one product on its own row. With 30 products this fits trivially on serverless; with hundreds of thousands the same code works — just throw more executors at it.
 
 # COMMAND ----------
 
 try:
     spark.conf.set("spark.databricks.optimizer.adaptive.enabled", "false")
 except Exception:
-    pass  # not settable on serverless
+    pass  # AQE config is not settable on serverless — safe to ignore.
+
 n_tasks = lp_table_all_info.select("product").distinct().count()
 
 optimal_transport_df = (
-  lp_table_all_info
-  .repartition(n_tasks, "product")
-  .groupBy("product")
-  .applyInPandas(transport_optimization, schema=res_schema)
+    lp_table_all_info
+    .repartition(n_tasks, "product")
+    .groupBy("product")
+    .applyInPandas(transport_optimization, schema=res_schema)
 )
 display(optimal_transport_df)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Save to delta
+# MAGIC ## Save the shipment plan
 
 # COMMAND ----------
 
-# Write the data 
-optimal_transport_df.write \
-.mode("overwrite") \
-.saveAsTable(f"{catalogName}.{dbName}.shipment_recommendations")
-
-# COMMAND ----------
+optimal_transport_df.write.mode("overwrite").saveAsTable(
+    f"{catalogName}.{dbName}.shipment_recommendations"
+)
+print(f"Wrote {catalogName}.{dbName}.shipment_recommendations")
 
 display(spark.sql(f"SELECT * FROM {catalogName}.{dbName}.shipment_recommendations"))
 
 # COMMAND ----------
 
-# MAGIC %md 
-# MAGIC &copy; 2023 Databricks, Inc. All rights reserved. The source in this notebook is provided subject to the Databricks License [https://databricks.com/db-license-source].  All included or referenced third party libraries are subject to the licenses set forth below.
+# MAGIC %md
+# MAGIC ## Next
 # MAGIC
-# MAGIC | library                                | description             | license    | source                                              |
-# MAGIC |----------------------------------------|-------------------------|------------|-----------------------------------------------------|
-# MAGIC | pulp                                 | A python Linear Programming API      | https://github.com/coin-or/pulp/blob/master/LICENSE        | https://github.com/coin-or/pulp                      |
+# MAGIC Open `05_Data_Analysis_&_Functions` — it builds three Unity Catalog SQL functions (`product_from_raw`, `raw_from_product`, `revenue_risk`) so this whole pipeline becomes queryable from an AI agent.
+# MAGIC
+# MAGIC ## Third-party libraries
+# MAGIC
+# MAGIC | Library | License | Source |
+# MAGIC |---|---|---|
+# MAGIC | [pulp](https://github.com/coin-or/pulp) | MIT | COIN-OR Foundation |

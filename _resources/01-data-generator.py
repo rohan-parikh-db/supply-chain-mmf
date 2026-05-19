@@ -5,7 +5,7 @@
 
 dbutils.widgets.dropdown('reset_all_data', 'false', ['true', 'false'], 'Reset all data')
 dbutils.widgets.text('catalogName',  'main', 'Catalog Name')
-dbutils.widgets.text('dbName',  'supply_chain_db' , 'Database Name')
+dbutils.widgets.text('dbName',  'supply_chain_mmf' , 'Database Name')
 
 # COMMAND ----------
 
