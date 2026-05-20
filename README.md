@@ -1,6 +1,8 @@
 # supply-chain-mmf
 
-An end-to-end pharmaceutical supply-chain optimization pipeline on Databricks: demand forecasting, raw-material planning, shipment optimization, and Unity Catalog SQL functions for AI agents. The pipeline runs entirely on serverless compute, with notebook 02 using serverless GPU.
+An end-to-end supply-chain optimization pipeline on Databricks — demand forecasting, raw-material planning, shipment optimization, and Unity Catalog SQL functions for AI agents. The worked example is pharmaceutical (BOM-driven manufacturer with a raw → primary → intermediate → finished-product hierarchy), but the pipeline generalizes to any BOM-driven supply chain: manufacturing, retail, consumer goods, automotive.
+
+The pipeline runs entirely on serverless compute, with notebook 02 using serverless GPU.
 
 The forecasting step is built on two technologies:
 
@@ -111,6 +113,33 @@ End-to-end run on the synthetic dataset (900 weekly series, 4-window rolling bac
 
 Mean SMAPE of 0.108 corresponds to roughly 10.8% error. For one-week-ahead distribution-style demand forecasting, a common rule of thumb is: under 10% excellent, 10–20% good, 20–30% acceptable. A zero-shot foundation model lands in the "good" band with no per-series tuning.
 
+## Using with Genie
+
+The 13 Delta tables and 3 UC SQL functions produced by notebooks 01-05 are designed to be a complete grounded surface for a Databricks Genie Space — no code changes required, just Genie Space configuration.
+
+**Setup (10-15 min):** run `06_Configure_Genie_Space.py`. The notebook verifies the schema is ready, adds table-level comments to sharpen Genie's grounding, and either provisions the Genie Space via the Workspace API or prints the manual UI steps as a fallback.
+
+**Booth narrative — a rehearsed 5-question linear flow that lands in ~90 seconds:**
+
+1. *"Which raw materials are short next week?"* → SQL aggregation on `raw_material_demand` vs `raw_material_supply`.
+2. *"Of those, which one puts the most revenue at risk?"* → Genie calls `revenue_risk()` and ranks.
+3. *"If we can't source enough of that material, which finished products are affected?"* → Calls `product_from_raw()`.
+4. *"How much weekly revenue does that represent?"* → Sums `revenue_risk()` output.
+5. *"Where should we ship the available supply to minimize loss?"* → Joins `shipment_recommendations` with the affected products.
+
+The full question catalog (booth narrative + extended depth questions for one-on-one customer conversations) is in [`genie_seed_questions.md`](./genie_seed_questions.md), with a mapping from each question to the UC SQL function it should invoke.
+
+## Extending with agents (Databricks-native and AWS-native)
+
+The same Unity Catalog SQL functions that ground Genie also serve as the universal tool surface for any agent runtime. Two recommended paths:
+
+| Path | Best fit | Where to start |
+|---|---|---|
+| **Mosaic AI Agent Framework / Agent Bricks** | Databricks-standardized customers; agent should run inside the Databricks identity + governance boundary | Wrap `product_from_raw`, `raw_from_product`, `revenue_risk` as agent tools in Mosaic AI Agent Framework; deploy to Model Serving |
+| **Amazon Bedrock AgentCore** | AWS-standardized customers; agent composes Databricks tools with other AWS services (Lambda, Step Functions, EventBridge) in a single AWS-resident runtime | Walk through [`07_Bedrock_AgentCore_Integration.md`](./07_Bedrock_AgentCore_Integration.md) |
+
+Both paths share the same UC functions and produce the same answers. Joint AWS-Databricks customers commonly run both, with Unity Catalog as the shared data + tool layer. See `07_Bedrock_AgentCore_Integration.md` for the detailed architecture, OAuth M2M auth setup, and Lambda action-group code stub.
+
 ## Project structure
 
 ```
@@ -120,6 +149,9 @@ supply-chain-mmf/
 ├── 03_Derive_Raw_Material_Demand.py
 ├── 04_Optimize_Transportation.py
 ├── 05_Data_Analysis_&_Functions.py
+├── 06_Configure_Genie_Space.py
+├── 07_Bedrock_AgentCore_Integration.md
+├── genie_seed_questions.md
 ├── _resources/
 │   ├── 00-setup.py
 │   ├── 01-data-generator.py
